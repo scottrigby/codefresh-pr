@@ -1,0 +1,91 @@
+version: '1.0'
+steps:
+  # Always run.
+  HelmDelete:
+    title: Helm Delete
+    image: 'codefresh/plugin-helm:2.8.0'
+    commands:
+      # Request: PR number VAR (here ${{CF_PR_NUMBER}}).
+      - 'helm delete --purge cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}}'
+    when:
+      # Request: PR event trigger actions conditionals.
+      pr:
+        action:
+          only:
+            - opened
+            - reopened
+            - synchronized
+            - closed
+
+  # Below, conditions: PR trigger event action not "closed".
+  BuildingDockerImage:
+    title: Building Docker Image
+    type: build
+    image_name: codefreshpr
+    working_directory: ./
+    dockerfile: Dockerfile
+    tag: '${{CF_BRANCH_TAG_NORMALIZED}}'
+    when:
+      pr:
+        action:
+          only:
+            - opened
+            - reopened
+            - synchronized
+  PushingToDockerRegistry:
+    title: Pushing to Docker Registry
+    type: push
+    candidate: '${{BuildingDockerImage}}'
+    tag: '${{CF_BRANCH_TAG_NORMALIZED}}'
+    registry: gcr
+    when:
+      pr:
+        action:
+          only:
+            - opened
+            - reopened
+            - synchronized
+  # ref: https://docs.codefresh.io/docs/variables
+  # Helm chart name pattern: cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}}
+  # Docker image name pattern: [ABOVE]:${{CF_SHORT_REVISION}}
+  HelmInstall:
+    title: Helm Install
+    image: 'codefresh/plugin-helm:2.8.0'
+    commands:
+      - 'helm install go-hello/ cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}} --namespace=codefresh --set image.repository=${{REGISTRY_DOMAIN}}/${{REGISTRY_ACCOUNT}}/codefreshpr,image.tag=${{CF_BRANCH_TAG_NORMALIZED}}'
+    when:
+      pr:
+        action:
+          only:
+            - opened
+            - reopened
+            - synchronized
+  FreestyleSetEnvs:
+    title: Freestyle step set ENV vars
+    image: 'codefresh/plugin-helm:2.8.0'
+    # To-do: ensure this multiline command syntax works. But in general this should be fine.
+    commands:
+        - export NODE_PORT=$(kubectl get --namespace codefresh -o jsonpath="{.spec.ports[0].nodePort}" services cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}})
+        - export NODE_IP=$(kubectl get nodes --namespace codefresh -o jsonpath="{.items[0].status.addresses[0].address}")
+        - cf_export HELM_URL=$(http://$NODE_IP:$NODE_PORT)
+  GitHubSetDeployStatus:
+    title: Set PR deployment status to "success"
+    image: cloudposse/github-status-updater
+    environment:
+      - GITHUB_ACTION=update_state
+      - GITHUB_TOKEN=${{GITHUB_TOKEN}}
+      - GITHUB_OWNER=${{CF_REPO_OWNER}}
+      - GITHUB_REPO=${{CF_REPO_NAME}}
+      - GITHUB_REF=${{CF_REVISION}}
+      - GITHUB_CONTEXT=Staging Environment
+      - GITHUB_STATE=success
+      - GITHUB_DESCRIPTION=Deployed to ${{FEATURE}} namespace
+      # See FreestyleSetEnvs step above.
+      - GITHUB_TARGET_URL=${{HELM_URL}}
+    when:
+      pr:
+        action:
+          only:
+            - opened
+            - reopened
+            - synchronized
