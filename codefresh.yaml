@@ -14,20 +14,20 @@ steps:
       #   only one K8S cluster configured.
       - cf_export KUBE_CONTEXT=$(kubectl config get-contexts -o name | head -n 1)
 
+  # See https://github.com/scottrigby/cf-export
+  CFExportPR:
+    title: Export CF_PR_ ENV vars
+    image: r6by/cf-export
+
   CFExportCommon:
     title: Export common ENV vars
     image: alpine:latest
     commands:
       # Set Helm release name for reference farther below.
-      - cf_export RELEASE_NAME=cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}}
+      - cf_export RELEASE_NAME=cf-${CF_REPO_OWNER}-${CF_REPO_NAME}-${CF_PR_NUMBER}
       # Set image name and tag.
-      - cf_export IMAGE_REPOSITORY=${{REGISTRY_DOMAIN}}/${{REGISTRY_ACCOUNT}}/codefreshpr
+      - cf_export IMAGE_REPOSITORY=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/codefreshpr
       - cf_export IMAGE_TAG=${{CF_REVISION}}
-
-  # See https://github.com/scottrigby/cf-export
-  CFExportPR:
-    title: Export CF_PR_ ENV vars
-    image: r6by/cf-export
 
   # Always run.
   # @todo Expose PR event trigger actions as ENV vars or structured conditionals.
@@ -35,17 +35,26 @@ steps:
     title: Helm Delete
     image: 'codefresh/plugin-helm:2.8.0'
     commands:
-      # Request: PR number VAR (here ${{CF_PR_NUMBER}}).
-      - helm delete --purge ${{RELEASE_NAME}}
-      # If the PR is closed or merged, end the pipeline steps here.
-      # Alternatively, use a CF conditional check in a separate step:
-      # https://docs.codefresh.io/docs/conditional-execution-of-steps
-      - >-
-        echo "The PR is ${{CF_PR_STATE}}"
-        case ${{CF_PR_STATE}} in
-          CLOSED|MERGED)
-            exit 1 ;;
-        esac
+      - |-
+        kubectl config use-context ${{KUBE_CONTEXT}}
+        if helm status ${RELEASE_NAME} > /dev/null 2>&1; then
+          helm delete --purge ${RELEASE_NAME}
+          echo 'Deleted PR env'
+        else
+          echo 'No PR env to delete'
+        fi
+
+  StopIfPRNotOpen:
+    title: Stop if PR is not open
+    image: alpine:latest
+    commands:
+      - echo "The PR is ${{CF_PR_STATE}}"
+      - exit 1
+    when:
+      condition:
+        all:
+          prClosed: '"${{CF_PR_STATE}}" == "CLOSED"'
+          prMerged: '"${{CF_PR_STATE}}" == "MERGED"'
 
   # Run only if PR is not closed or merged (see HelmDelete step commands above).
   BuildingDockerImage:
@@ -55,6 +64,10 @@ steps:
     working_directory: ./
     dockerfile: Dockerfile
     tag: '${{IMAGE_TAG}}'
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   PushingToDockerRegistry:
     title: Pushing to Docker Registry
@@ -62,6 +75,10 @@ steps:
     candidate: '${{BuildingDockerImage}}'
     tag: '${{IMAGE_TAG}}'
     registry: gcr
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   # Docker image name pattern: ${{RELEASE_NAME}}:${{CF_SHORT_REVISION}}
   HelmInstall:
@@ -71,22 +88,29 @@ steps:
     working_directory: ./
     commands:
       - kubectl config use-context ${{KUBE_CONTEXT}}
-      - helm init --client-only
       - >-
         helm install go-hello/
         --namespace=${{NAMESPACE}}
         --name ${{RELEASE_NAME}}
         --set image.repository=${{IMAGE_REPOSITORY}}
         --set image.tag=${{IMAGE_TAG}}
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   CFExportHelm:
     title: Export Helm ENV vars
     image: 'codefresh/plugin-helm:2.8.0'
     commands:
       - >-
-        export NODE_PORT=$(kubectl get --namespace ${{NAMESPACE}} -o jsonpath="{.spec.ports[0].nodePort}" services ${{RELEASE_NAME}})
-        export NODE_IP=$(kubectl get nodes --namespace ${{NAMESPACE}} -o jsonpath="{.items[0].status.addresses[0].address}")
-        cf_export HELM_URL=$(http://$NODE_IP:$NODE_PORT)
+        export SERVICE_IP=$(kubectl get svc --namespace ${{NAMESPACE}} ${{RELEASE_NAME}}-go-hello -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        cf_export HELM_URL=$(http://$SERVICE_IP:$PORT)
+        echo HELM_URL "http://$SERVICE_IP:$PORT"
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   GitHubSetDeployStatus:
     title: Set PR deployment status to "success"
@@ -102,3 +126,7 @@ steps:
       - GITHUB_DESCRIPTION=Deployed to ${{NAMESPACE}} namespace
       # See CFExportHelm step above.
       - GITHUB_TARGET_URL=${{HELM_URL}}
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
