@@ -44,18 +44,6 @@ steps:
           echo 'No PR env to delete'
         fi
 
-  StopIfPRNotOpen:
-    title: Stop if PR is not open
-    image: alpine:latest
-    commands:
-      - echo "The PR is ${{CF_PR_STATE}}"
-      - exit 1
-    when:
-      condition:
-        any:
-          prClosed: '"${{CF_PR_STATE}}" == "CLOSED"'
-          prMerged: '"${{CF_PR_STATE}}" == "MERGED"'
-
   # Run only if PR is not closed or merged (see HelmDelete step commands above).
   BuildingDockerImage:
     title: Building Docker Image
