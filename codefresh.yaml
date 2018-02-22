@@ -52,7 +52,7 @@ steps:
       - exit 1
     when:
       condition:
-        all:
+        any:
           prClosed: '"${{CF_PR_STATE}}" == "CLOSED"'
           prMerged: '"${{CF_PR_STATE}}" == "MERGED"'
 
