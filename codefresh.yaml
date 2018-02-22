@@ -68,33 +68,30 @@ steps:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
-  # Docker image name pattern: ${{RELEASE_NAME}}:${{CF_SHORT_REVISION}}
   HelmInstall:
     title: Helm Install
     image: 'codefresh/plugin-helm:2.8.0'
     # @todo Is setting the working_directory required?
     working_directory: ./
     commands:
-      - kubectl config use-context ${{KUBE_CONTEXT}}
-      - >-
-        helm install go-hello/
-        --namespace=${{NAMESPACE}}
-        --name ${{RELEASE_NAME}}
-        --set image.repository=${{IMAGE_REPOSITORY}}
-        --set image.tag=${{IMAGE_TAG}}
-    when:
-      condition:
-        all:
-          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
-
-  CFExportHelm:
-    title: Export Helm ENV vars
-    image: 'codefresh/plugin-helm:2.8.0'
-    commands:
-      - >-
-        export SERVICE_IP=$(kubectl get svc --namespace ${{NAMESPACE}} ${{RELEASE_NAME}}-go-hello -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-        cf_export HELM_URL=$(http://$SERVICE_IP:$PORT)
-        echo HELM_URL "http://$SERVICE_IP:$PORT"
+      - |-
+        kubectl config use-context ${KUBE_CONTEXT}
+        helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${IMAGE_REPOSITORY} --set image.tag=${IMAGE_TAG}
+        SERVICE_NAME=${RELEASE_NAME}-go-hello
+        # @todo Make wait time an ENV-based configuration.
+        WAIT=$((SECONDS+30))
+        SERVICE_IP=""
+        while [ -z "$SERVICE_IP" ] && [ "$SECONDS" -lt "$WAIT" ]
+        do
+          sleep 10
+          echo -e "Service IP is still pending. Waiting..."
+          SERVICE_IP=$(kubectl get svc --namespace ${NAMESPACE} ${SERVICE_NAME} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        done
+        echo "SERVICE_IP=${SERVICE_IP}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+        echo "Exported SERVICE_IP ${SERVICE_IP}"
+        HELM_URL=http://${SERVICE_IP}:${PORT}
+        echo "HELM_URL=${HELM_URL}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+        echo "Exported HELM_URL ${HELM_URL}"
     when:
       condition:
         all:
@@ -112,9 +109,12 @@ steps:
       - GITHUB_CONTEXT=PR Release
       - GITHUB_STATE=success
       - GITHUB_DESCRIPTION=Deployed to ${{NAMESPACE}} namespace
-      # See CFExportHelm step above.
+      # See InstallChart step.
       - GITHUB_TARGET_URL=${{HELM_URL}}
     when:
       condition:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+          # @todo Consider letting this fail if the SERVICE_IP wasn't set due to
+          #   scripting error in InstallChart step?
+          helmURL: '"${{SERVICE_IP}}" != ""'
