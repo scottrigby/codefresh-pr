@@ -17,7 +17,7 @@ steps:
   # See https://github.com/scottrigby/cf-export
   CFExportPR:
     title: Export CF_PR_ ENV vars
-    image: r6by/cf-export
+    image: r6by/cf-github-pr-export
 
   CFExportCommon:
     title: Export common ENV vars
