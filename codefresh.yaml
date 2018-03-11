@@ -125,5 +125,5 @@ steps:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
           # @todo Consider letting this fail if the SERVICE_IP wasn't set due to
-          #   scripting error in InstallChart step?
+          #   scripting error in above steps?
           helmURL: '"${{SERVICE_IP}}" != ""'
