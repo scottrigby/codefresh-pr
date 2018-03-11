@@ -83,8 +83,28 @@ steps:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   CFHelmExport:
-    title: Export Helm vars
-    image: r6by/cf-helm-export
+    title: Export dynamic Helm vars
+    image: 'codefresh/plugin-helm:2.8.0'
+    commands:
+      - |-
+        SERVICE_NAME=${RELEASE_NAME}-go-hello
+        PORT=${PORT:-80}
+        SCHEME=${SCHEME:-http}
+        for i in $(seq 1 ${RETRIES:=10});
+          do
+            echo "Service IP is still pending. Waiting..."
+            SERVICE_IP=$(kubectl get svc --namespace ${NAMESPACE} ${SERVICE_NAME} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ ! -z "$SERVICE_IP" ]; then
+              echo "SERVICE_IP=${SERVICE_IP}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+              echo "Exported SERVICE_IP ${SERVICE_IP}"
+              echo "HELM_URL=${SCHEME}://${SERVICE_IP}:${PORT}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+              echo "Exported HELM_URL ${HELM_URL}"
+              exit 0
+            fi
+            sleep ${WAIT:-10}
+          done
+        echo "Service IP didn't resolve in ${RETRIES} retries"
+        exit 1
 
   GitHubSetDeployStatus:
     title: Set PR deployment status to "success"
