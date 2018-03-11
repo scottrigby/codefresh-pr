@@ -105,6 +105,10 @@ steps:
           done
         echo "Service IP didn't resolve in ${RETRIES} retries"
         exit 1
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   GitHubSetDeployStatus:
     title: Set PR deployment status to "success"
