@@ -1,73 +1,111 @@
 version: '1.0'
 steps:
+  # Set ENV vars that must be evaluated (can not be set via Codegresh UI).
+  CFExportK8S:
+    title: Export K8S ENV vars
+    image: 'codefresh/plugin-helm:2.8.0'
+    commands:
+      # Helper to get the name to set the context farther below. Codefresh sets
+      # the kubeconfig based on your clusters, before running build steps. Here
+      # we assume a single cluster is configured. If you want to specify the
+      # cluster, "KUBE_CONTEXT" could be set manually as an ENV var in the
+      # Codefresh UI.
+      # @todo This would be a nice built-in feature of Codefresh, if there is
+      #   only one K8S cluster configured.
+      - cf_export KUBE_CONTEXT=$(kubectl config get-contexts -o name | head -n 1)
+
+  # See https://github.com/scottrigby/cf-export
+  CFExportPR:
+    title: Export CF_PR_ ENV vars
+    image: r6by/cf-github-pr-export
+
+  CFExportCommon:
+    title: Export common ENV vars
+    image: alpine:latest
+    commands:
+      # Set Helm release name for reference farther below.
+      - cf_export RELEASE_NAME=cf-${CF_REPO_OWNER}-${CF_REPO_NAME}-${CF_PR_NUMBER}
+      # Set image name and tag.
+      - cf_export IMAGE_REPOSITORY=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/codefreshpr
+      - cf_export IMAGE_TAG=${{CF_REVISION}}
+
   # Always run.
+  # @todo Expose PR event trigger actions as ENV vars or structured conditionals.
   HelmDelete:
     title: Helm Delete
     image: 'codefresh/plugin-helm:2.8.0'
     commands:
-      # Request: PR number VAR (here ${{CF_PR_NUMBER}}).
-      - 'helm delete --purge cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}}'
-    when:
-      # Request: PR event trigger actions conditionals.
-      pr:
-        action:
-          only:
-            - opened
-            - reopened
-            - synchronized
-            - closed
+      - |-
+        kubectl config use-context ${{KUBE_CONTEXT}}
+        if helm status ${RELEASE_NAME} > /dev/null 2>&1; then
+          helm delete --purge ${RELEASE_NAME}
+          echo 'Deleted PR env'
+        else
+          echo 'No PR env to delete'
+        fi
 
-  # Below, conditions: PR trigger event action not "closed".
+  # Run only if PR is not closed or merged (see HelmDelete step commands above).
   BuildingDockerImage:
     title: Building Docker Image
     type: build
     image_name: codefreshpr
     working_directory: ./
     dockerfile: Dockerfile
-    tag: '${{CF_BRANCH_TAG_NORMALIZED}}'
+    tag: '${{IMAGE_TAG}}'
     when:
-      pr:
-        action:
-          only:
-            - opened
-            - reopened
-            - synchronized
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+
   PushingToDockerRegistry:
     title: Pushing to Docker Registry
     type: push
     candidate: '${{BuildingDockerImage}}'
-    tag: '${{CF_BRANCH_TAG_NORMALIZED}}'
+    tag: '${{IMAGE_TAG}}'
     registry: gcr
     when:
-      pr:
-        action:
-          only:
-            - opened
-            - reopened
-            - synchronized
-  # ref: https://docs.codefresh.io/docs/variables
-  # Helm chart name pattern: cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}}
-  # Docker image name pattern: [ABOVE]:${{CF_SHORT_REVISION}}
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+
   HelmInstall:
     title: Helm Install
     image: 'codefresh/plugin-helm:2.8.0'
+    # @todo Is setting the working_directory required?
+    working_directory: ./
     commands:
-      - 'helm install go-hello/ cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}} --namespace=codefresh --set image.repository=${{REGISTRY_DOMAIN}}/${{REGISTRY_ACCOUNT}}/codefreshpr,image.tag=${{CF_BRANCH_TAG_NORMALIZED}}'
+      - |-
+        kubectl config use-context ${KUBE_CONTEXT}
+        helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${IMAGE_REPOSITORY} --set image.tag=${IMAGE_TAG}
     when:
-      pr:
-        action:
-          only:
-            - opened
-            - reopened
-            - synchronized
-  FreestyleSetEnvs:
-    title: Freestyle step set ENV vars
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+
+  CFHelmExport:
+    title: Export dynamic Helm vars
     image: 'codefresh/plugin-helm:2.8.0'
-    # To-do: ensure this multiline command syntax works. But in general this should be fine.
     commands:
-        - export NODE_PORT=$(kubectl get --namespace codefresh -o jsonpath="{.spec.ports[0].nodePort}" services cf-${{CF_REPO_OWNER}}-${{CF_REPO_NAME}}-${{CF_PR_NUMBER}})
-        - export NODE_IP=$(kubectl get nodes --namespace codefresh -o jsonpath="{.items[0].status.addresses[0].address}")
-        - cf_export HELM_URL=$(http://$NODE_IP:$NODE_PORT)
+      - |-
+        SERVICE_NAME=${RELEASE_NAME}-go-hello
+        PORT=${PORT:-80}
+        SCHEME=${SCHEME:-http}
+        for i in $(seq 1 ${RETRIES:=10});
+          do
+            echo "Service IP is still pending. Waiting..."
+            SERVICE_IP=$(kubectl get svc --namespace ${NAMESPACE} ${SERVICE_NAME} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ ! -z "$SERVICE_IP" ]; then
+              echo "SERVICE_IP=${SERVICE_IP}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+              echo "Exported SERVICE_IP ${SERVICE_IP}"
+              echo "HELM_URL=${SCHEME}://${SERVICE_IP}:${PORT}" >> ${CF_VOLUME_PATH}/env_vars_to_export
+              echo "Exported HELM_URL ${HELM_URL}"
+              exit 0
+            fi
+            sleep ${WAIT:-10}
+          done
+        echo "Service IP didn't resolve in ${RETRIES} retries"
+        exit 1
+
   GitHubSetDeployStatus:
     title: Set PR deployment status to "success"
     image: cloudposse/github-status-updater
@@ -77,15 +115,15 @@ steps:
       - GITHUB_OWNER=${{CF_REPO_OWNER}}
       - GITHUB_REPO=${{CF_REPO_NAME}}
       - GITHUB_REF=${{CF_REVISION}}
-      - GITHUB_CONTEXT=Staging Environment
+      - GITHUB_CONTEXT=PR Release
       - GITHUB_STATE=success
-      - GITHUB_DESCRIPTION=Deployed to ${{FEATURE}} namespace
-      # See FreestyleSetEnvs step above.
+      - GITHUB_DESCRIPTION=Deployed to ${{NAMESPACE}} namespace
+      # See CFHelmExport step.
       - GITHUB_TARGET_URL=${{HELM_URL}}
     when:
-      pr:
-        action:
-          only:
-            - opened
-            - reopened
-            - synchronized
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+          # @todo Consider letting this fail if the SERVICE_IP wasn't set due to
+          #   scripting error in above steps?
+          helmURL: '"${{SERVICE_IP}}" != ""'
