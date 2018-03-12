@@ -56,6 +56,10 @@ steps:
       condition:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+    # Fixes stale builds, which in cases have not included all image layers.
+    # Note that enabling this field will slow down builds, so it is a trade-off.
+    # ref: https://codefresh.io/docs/docs/codefresh-yaml/steps/build-1/
+    no_cache: true
 
   PushingToDockerRegistry:
     title: Pushing to Docker Registry
