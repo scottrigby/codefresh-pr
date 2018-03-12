@@ -25,9 +25,6 @@ steps:
     commands:
       # Set Helm release name for reference farther below.
       - cf_export RELEASE_NAME=cf-${CF_REPO_OWNER}-${CF_REPO_NAME}-${CF_PR_NUMBER}
-      # Set image name and tag.
-      - cf_export IMAGE_REPOSITORY=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/codefreshpr
-      - cf_export IMAGE_TAG=${{CF_REVISION}}
 
   # Always run.
   # @todo Expose PR event trigger actions as ENV vars or structured conditionals.
@@ -48,10 +45,10 @@ steps:
   BuildingDockerImage:
     title: Building Docker Image
     type: build
-    image_name: codefreshpr
+    image_name: ${{RELEASE_NAME}}
     working_directory: ./
     dockerfile: Dockerfile
-    tag: '${{IMAGE_TAG}}'
+    tag: '${{CF_REVISION}}'
     when:
       condition:
         all:
@@ -65,13 +62,17 @@ steps:
     title: Pushing to Docker Registry
     type: push
     candidate: '${{BuildingDockerImage}}'
-    tag: '${{IMAGE_TAG}}'
+    tag: '${{CF_REVISION}}'
     registry: gcr
     when:
       condition:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
+  # Requires setting NAMESPACE, REGISTRY_DOMAIN and REGISTRY_ACCOUNT ENV var in
+  # Codefresh UI.
+  # Note that this step will always be custom to the application and chart,
+  # but it must export HELM_URL ENV var in order for the following step to work.
   HelmInstall:
     title: Helm Install
     image: 'codefresh/plugin-helm:2.8.0'
@@ -80,16 +81,7 @@ steps:
     commands:
       - |-
         kubectl config use-context ${KUBE_CONTEXT}
-        helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${IMAGE_REPOSITORY} --set image.tag=${IMAGE_TAG}
-    when:
-      condition:
-        all:
-          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
-
-  CFHelmExport:
-    title: Export dynamic Helm vars
-    image: 'codefresh/plugin-helm:2.8.0'
-    commands:
+        helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/${RELEASE_NAME} --set image.tag=${CF_REVISION}
       - |-
         SERVICE_NAME=${RELEASE_NAME}-go-hello
         PORT=${PORT:-80}
@@ -114,6 +106,7 @@ steps:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
+  # Requires setting GITHUB_TOKEN ENV var in Codefresh UI.
   GitHubSetDeployStatus:
     title: Set PR deployment status to "success"
     image: cloudposse/github-status-updater
@@ -126,12 +119,12 @@ steps:
       - GITHUB_CONTEXT=PR Release
       - GITHUB_STATE=success
       - GITHUB_DESCRIPTION=Deployed to ${{NAMESPACE}} namespace
-      # See CFHelmExport step.
+      # See HelmInstall step.
       - GITHUB_TARGET_URL=${{HELM_URL}}
     when:
       condition:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
-          # @todo Consider letting this fail if the SERVICE_IP wasn't set due to
-          #   scripting error in above steps?
-          helmURL: '"${{SERVICE_IP}}" != ""'
+          # @todo Consider letting this fail if the HELM_URL wasn't set due to
+          #   scripting error in above step?
+          helmURL: '"${{HELM_URL}}" != ""'
