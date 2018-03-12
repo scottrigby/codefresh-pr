@@ -24,7 +24,7 @@ steps:
     image: alpine:latest
     commands:
       # Set Helm release name for reference farther below.
-      - cf_export RELEASE_NAME=cf-${CF_REPO_OWNER}-${CF_REPO_NAME}-${CF_PR_NUMBER}
+      - cf_export RELEASE_NAME=$(echo cf-${CF_REPO_OWNER}-${CF_REPO_NAME}-${CF_PR_NUMBER} | awk '{print tolower($0)}' | awk '{gsub("_", "-") ; print $0}')
 
   # Always run.
   # @todo Expose PR event trigger actions as ENV vars or structured conditionals.
