@@ -1,5 +1,48 @@
 version: '1.0'
 steps:
+  # @todo Revisit when CF_PR_ACTION ENV var, or Pull Request action trigger
+  # granularity, become available.
+  #
+  # ValidatePRAction:
+  #   title: validate PR action
+  #   image: alpine:latest
+  #   commands:
+  #     - |-
+  #       echo "Irrelvant PR action ${CF_PR_ACTION}"
+  #       exit 1
+  #   when:
+  #     condition:
+  #       all:
+  #         prActionClosed: '"${{CF_PR_ACTION}}" != "CLOSED"'
+  #         prActionOpened: '"${{CF_PR_ACTION}}" != "OPENED"'
+  #         prActionReopened: '"${{CF_PR_ACTION}}" != "REOPENED"'
+  #         prActionSynchronized: '"${{CF_PR_ACTION}}" != "SYNCHRONIZED"'
+
+  # Requires setting GITHUB_TOKEN ENV var in Codefresh UI.
+  # See https://github.com/scottrigby/cf-export
+  CFExportPR:
+    title: Export CF_PR_ ENV vars
+    image: r6by/cf-github-pr-export
+
+  # @todo Branch protection will not work until we have a way to determine the
+  # Pull Request base branch name (not currently included in ENV vars), which is
+  # needed to set GITHUB_REF ENV var below. Perhaps export the base branch as
+  # part of r6by/cf-github-pr-export?
+  # GitHubUpdateBranchProtection:
+  #   title: Update branch protection
+  #   image: cloudposse/github-status-updater
+  #   environment:
+  #     - GITHUB_ACTION=update_branch_protection
+  #     - GITHUB_TOKEN=${{GITHUB_TOKEN}}
+  #     - GITHUB_OWNER=${{CF_REPO_OWNER}}
+  #     - GITHUB_REPO=${{CF_REPO_NAME}}
+  #     - GITHUB_REF=MISSING_INFO
+  #     - GITHUB_CONTEXT=PR Release
+  #   when:
+  #     condition:
+  #       all:
+  #         prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
+
   # Set ENV vars that must be evaluated (can not be set via Codegresh UI).
   CFExportK8S:
     title: Export K8S ENV vars
@@ -14,11 +57,6 @@ steps:
       #   only one K8S cluster configured.
       - cf_export KUBE_CONTEXT=$(kubectl config get-contexts -o name | head -n 1)
 
-  # See https://github.com/scottrigby/cf-export
-  CFExportPR:
-    title: Export CF_PR_ ENV vars
-    image: r6by/cf-github-pr-export
-
   CFExportCommon:
     title: Export common ENV vars
     image: alpine:latest
@@ -32,14 +70,34 @@ steps:
     title: Helm Delete
     image: 'codefresh/plugin-helm:2.8.0'
     commands:
+      - kubectl config use-context ${{KUBE_CONTEXT}}
       - |-
-        kubectl config use-context ${{KUBE_CONTEXT}}
         if helm status ${RELEASE_NAME} > /dev/null 2>&1; then
           helm delete --purge ${RELEASE_NAME}
           echo 'Deleted PR env'
         else
           echo 'No PR env to delete'
         fi
+
+  # Requires setting GITHUB_TOKEN ENV var in Codefresh UI.
+  # We clear any previous deploy status so old build status/url will not be
+  # mistaken for the current build in progress.
+  GitHubClearDeployStatus:
+    title: Set PR deployment status to "pending"
+    image: cloudposse/github-status-updater
+    environment:
+      - GITHUB_ACTION=update_state
+      - GITHUB_TOKEN=${{GITHUB_TOKEN}}
+      - GITHUB_OWNER=${{CF_REPO_OWNER}}
+      - GITHUB_REPO=${{CF_REPO_NAME}}
+      - GITHUB_REF=${{CF_REVISION}}
+      - GITHUB_CONTEXT=PR Release
+      - GITHUB_STATE=pending
+      - GITHUB_DESCRIPTION=Waiting for successful build
+    when:
+      condition:
+        all:
+          prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
 
   # Run only if PR is not closed or merged (see HelmDelete step commands above).
   BuildingDockerImage:
@@ -56,7 +114,7 @@ steps:
     # Fixes stale builds, which in cases have not included all image layers.
     # Note that enabling this field will slow down builds, so it is a trade-off.
     # ref: https://codefresh.io/docs/docs/codefresh-yaml/steps/build-1/
-    no_cache: true
+    # no_cache: true
 
   PushingToDockerRegistry:
     title: Pushing to Docker Registry
@@ -79,25 +137,22 @@ steps:
     # @todo Is setting the working_directory required?
     working_directory: ./
     commands:
-      - |-
-        kubectl config use-context ${KUBE_CONTEXT}
-        helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/${RELEASE_NAME} --set image.tag=${CF_REVISION}
+      - kubectl config use-context ${KUBE_CONTEXT}
+      - helm install go-hello/ --namespace=${NAMESPACE} --name ${RELEASE_NAME} --set image.repository=${REGISTRY_DOMAIN}/${REGISTRY_ACCOUNT}/${RELEASE_NAME} --set image.tag=${CF_REVISION}
       - |-
         SERVICE_NAME=${RELEASE_NAME}-go-hello
         PORT=${PORT:-80}
         SCHEME=${SCHEME:-http}
-        for i in $(seq 1 ${RETRIES:=10});
+        for i in $(seq 1 ${RETRIES:=20});
           do
             echo "Service IP is still pending. Waiting..."
             SERVICE_IP=$(kubectl get svc --namespace ${NAMESPACE} ${SERVICE_NAME} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
             if [ ! -z "$SERVICE_IP" ]; then
-              echo "SERVICE_IP=${SERVICE_IP}" >> ${CF_VOLUME_PATH}/env_vars_to_export
-              echo "Exported SERVICE_IP ${SERVICE_IP}"
               echo "HELM_URL=${SCHEME}://${SERVICE_IP}:${PORT}" >> ${CF_VOLUME_PATH}/env_vars_to_export
               echo "Exported HELM_URL ${HELM_URL}"
               exit 0
             fi
-            sleep ${WAIT:-10}
+            sleep ${WAIT:-5}
           done
         echo "Service IP didn't resolve in ${RETRIES} retries"
         exit 1
@@ -125,6 +180,4 @@ steps:
       condition:
         all:
           prOpen: '"${{CF_PR_STATE}}" == "OPEN"'
-          # @todo Consider letting this fail if the HELM_URL wasn't set due to
-          #   scripting error in above step?
           helmURL: '"${{HELM_URL}}" != ""'
