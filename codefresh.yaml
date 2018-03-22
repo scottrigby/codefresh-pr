@@ -1,23 +1,5 @@
 version: '1.0'
 steps:
-  # @todo Revisit when CF_PR_ACTION ENV var, or Pull Request action trigger
-  # granularity, become available.
-  #
-  # ValidatePRAction:
-  #   title: validate PR action
-  #   image: alpine:latest
-  #   commands:
-  #     - |-
-  #       echo "Irrelvant PR action ${CF_PR_ACTION}"
-  #       exit 1
-  #   when:
-  #     condition:
-  #       all:
-  #         prActionClosed: '"${{CF_PR_ACTION}}" != "CLOSED"'
-  #         prActionOpened: '"${{CF_PR_ACTION}}" != "OPENED"'
-  #         prActionReopened: '"${{CF_PR_ACTION}}" != "REOPENED"'
-  #         prActionSynchronized: '"${{CF_PR_ACTION}}" != "SYNCHRONIZED"'
-
   # Requires setting GITHUB_TOKEN ENV var in Codefresh UI.
   # See https://github.com/scottrigby/cf-export
   CFExportPR:

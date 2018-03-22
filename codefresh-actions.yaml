@@ -1,0 +1,46 @@
+version: '1.0'
+steps:
+  # ID of the pipeline we want to trigger.
+  # Transforms output of "env", to a single YAML map array item, formatted as
+  # expected by codefresh CLI "run" command's "--var-file" option.
+  # Example:
+  # - FOO: "bar"
+  #   BAZ: "qux"
+  #   QUUX: "corge"
+  #
+  # PROCEED WITH CAUTION. As I found out the hard way, the "--var-file" option
+  # does not validate YAML-parsing a data structure matching it's expectated
+  # data format. For example, a textfile containing 1300 characters (a Pull
+  # Request triggered automated build's "env" output) rapidly spawned 1300
+  # builds!
+  # Attempting a quick remedy, I wrote a quick script to terminate all the build
+  # IDs from STDOUT before I cancelled the command:
+  # `while IFS= read -r line; do codefresh terminate "$line"; done < COPYBUFFER`
+  # However, the "run" command appears to run to completion even if the CLI
+  # process is manually exited midway - which I did - so there were 1000 builds
+  # in queue with IDs I could not access in order to script bulk termination.
+  # Unfortunately "codefresh get builds -o id" only returns the latest 25
+  # results so that didn't get IDs between the first 25 and those from initial
+  # "run" STDOUT. Similarly, the Codefresh API at
+  # https://g.codefresh.io/api/#!/builds/getAll returned 0 results. In the end,
+  # I could have only manually stopped the builds using the Codefresh UI to
+  # unblock new builds (personally I didn't want to click 1300 times across 130
+  # pages, so I waited until all builds were finished before new builds were
+  # unblocked).
+  # The issue has been reported to Codefresh as high-priority, and this comment
+  # can be removed once that issue is fixed.
+  FilterBuildsByPRAction:
+    title: Trigger
+    image: codefresh/cli:latest
+    commands:
+      - codefresh auth create-context --api-key ${{API_KEY}}
+      - env | sed -e 's/=/:\ "/' -e 's/$/"/g' -e '1 s/^/- /' -e '1! s/^/  /' > var_file.yml
+      - cat var_file.yml
+      - codefresh run ${PIPELINE_ID} -b=${CF_BRANCH} --var-file ./var_file.yml
+    when:
+      condition:
+        any:
+          prActionClosed: '"${{CF_PULL_REQUEST_ACTION}}" == "closed"'
+          prActionOpened: '"${{CF_PULL_REQUEST_ACTION}}" == "opened"'
+          prActionReopened: '"${{CF_PULL_REQUEST_ACTION}}" == "reopened"'
+          prActionSynchronized: '"${{CF_PULL_REQUEST_ACTION}}" == "synchronize"'
