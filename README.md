@@ -10,6 +10,13 @@ Although Codefresh can connect to other K8S cloud providers and container regist
 1. Create a new namespace if you don't have one you want to use for this demo. I recommend `kubectl create ns codefresh`, but the `NAMESPACE` environment variable required by this demo app is configurable.
 1. Helm must be installed, and you must be able to connect to Tiller to your desired namespace. The simplest way to secure your Tiller installation is the first approach (restart tiller with `--listen=localhost:44134` flag) outlined in [this excellent article](https://engineering.bitnami.com/articles/helm-security.html) by @anguslees. If you take a more complicated approach, this tutorial assumes you know what you're doing.
 
+## Connect your cluster and registry to Codefresh
+
+In Codefresh UI:
+
+1. [Connect your GKE cluster](https://codefresh.io/docs/docs/deploy-to-kubernetes/adding-non-gke-kubernetes-cluster/)
+1. [Connect your GCR registry](https://codefresh.io/docs/docs/docker-registries/external-docker-registries/google-container-registry/)
+
 ## Set up a GitHub repo for a Codefresh pipeline
 
 In GitHub UI:
@@ -17,7 +24,7 @@ In GitHub UI:
 1. Fork this repo
 1. Create and save a new [GitHub Personal access token](https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/), setting the `repo` scope
 
-## Connect your Codefresh repository
+## Connect your repository to Codefresh
 
 In Codefresh UI:
 
