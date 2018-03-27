@@ -52,8 +52,9 @@ You will create two pipelines. This first pipeline will filter PR actions to onl
     1. `GITHUB_TOKEN` = [your GitHub personal access token]
     1. `API_KEY` = [your Codefresh API key]
     1. `PIPELINE_ID` = [the ID of the next pipeline you will create. See next section]
-1. Under `WORKFLOW` toggle from `Basic` to `YAML`, and select `Use YAML from Repository `
-    1. `Path to YAML` type `codefresh-actions.yaml`
+1. Under `WORKFLOW` toggle from `Basic` to `YAML`, and select `Inline YAML`
+    1. Paste the contents of `codefresh-actions.yaml` from this repo into the textarea
+    1. **Note that we recommend `Inline YAML` for security reasons.** The `Use YAML from Repository` option draws from the PR branch, and this can be a security risk (for example, an unprivileged user submitting a PR to a public repo could run arbitrary `kubectl` commands on the connected cluster)
 1. Click `Save` to save these configurations for this pipeline
 
 ## Configure a PR release pipeline
@@ -65,8 +66,9 @@ Triggered only by the first "PR action filter" pipeline, this pipeline is respon
 1. Copy the pipeline ID, and add to the `PIPELINE_ID` environment variable in the previous pipeline (you can get the ID from the [Codefresh CLI](https://github.com/codefresh-io/cli) or by temporarily enabling the webhook option which contains the ID)
 1. Do not enable `Configuration` > `General Settings` > `Automated build` > `Add webhook`
 1. Do not bother configuring `Configuration` > `Environment Variables`, as they will be ignored since this pipeline is only built from the previous one, which in YAML is configured to pass along it's own environment variables.
-1. Under `WORKFLOW` toggle from `Basic` to `YAML`, and select `Use YAML from Repository `
-    1. `Path to YAML` type `codefresh.yaml`
+1. Under `WORKFLOW` toggle from `Basic` to `YAML`, and select `Inline YAML`
+    1. Paste the contents of `codefresh.yaml` from this repo into the textarea
+    1. **Note that we recommend `Inline YAML` for security reasons.** See explanation above
 1. Click `Save` to save these configurations for this pipeline
 
 ## Create a test Pull Request
