@@ -170,7 +170,8 @@ steps:
     title: Slack notification
     image: tutum/curl
     commands:
-      - export DATA="{\"text\":\"PR ${CF_PR_NUMBER} deployed to ${HELM_URL}\"}"
+      - export GITHUB_PR_URL=https://github.com/${CF_REPO_OWNER}/${CF_REPO_NAME}/pull/${CF_PR_NUMBER}
+      - export DATA="{\"text\":\"<${GITHUB_PR_URL}|PR ${CF_PR_NUMBER}> release <${HELM_URL}|deployed> :rocket:\"}"
       - curl -X POST --data-urlencode "payload=${DATA}" ${SLACK_WEB_URL}
     when:
       condition:
