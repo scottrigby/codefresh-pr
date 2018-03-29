@@ -169,9 +169,8 @@ steps:
   slack_notify:
     title: Slack notification
     image: tutum/curl
-    environment:
-      - DATA="{\"text\":\"PR ${CF_PR_NUMBER} deployed to ${HELM_URL}\"}"
     commands:
+      - export DATA="{\"text\":\"PR ${CF_PR_NUMBER} deployed to ${HELM_URL}\"}"
       - curl -X POST --data-urlencode "payload=${DATA}" ${SLACK_WEB_URL}
     when:
       condition:
