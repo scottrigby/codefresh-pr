@@ -4,7 +4,7 @@ steps:
   # See https://github.com/scottrigby/cf-export
   CFExportPR:
     title: Export CF_PR_ ENV vars
-    image: r6by/cf-github-pr-export:0.1.0
+    image: r6by/cf-github-pr-export:0.2.1
 
   # @todo Branch protection will not work until we have a way to determine the
   # Pull Request base branch name (not currently included in ENV vars), which is
